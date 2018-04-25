@@ -16,4 +16,4 @@ OpenWave-200 uses third party software which is copyrighted by its respective co
 holder. For details see the copyright notice of the individual package.
 
 The Qt GUI Toolkit is Copyright (c) 2014 Digia Plc and/or its subsidiary(-ies).
-OpenWave-2KE use Qt version 4.8 library under the terms of the LGPL version 2.1.
+OpenWave-200 use Qt version 4.8 library under the terms of the LGPL version 2.1.

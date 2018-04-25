@@ -14,14 +14,14 @@ This icon is copyright 2014 (c) Good Will Instrument Co., Ltd all rights reserve
 
 
 
-OpenWave-200 is an open-source project. It's a simple python program that can get image or raw data from digital storage oscilloscope(GDS-200/300) via the USB port.  
+OpenWave-200 is an open-source project. It's a simple python program that can get image or raw data from digital storage oscilloscope(GDS-200/300, IDS-200/300) via the USB port.  
 
 Now we can execute the same source code on both Windows and Linux(Ubuntu) operating system without changing a word.
 
 
 Equipment
 ------------
-You have to get a new digital storage oscilloscope - GDS-200/300(GOOD WILL INSTRUMENT) and a PC or NB with MS Windows or Ubuntu Linux OS.
+You have to get a new digital storage oscilloscope - GDS-200/300(GOOD WILL INSTRUMENT), IDS-200/300(RS Pro) and a PC or NB with MS Windows or Ubuntu Linux OS.
 
 
 

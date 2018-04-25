@@ -1,3 +1,4 @@
+# -*- coding: utf8 -*-
 """
 Program name: OpenWave-200
 
@@ -27,18 +28,20 @@ OpenWave-200 is a python example program used to get waveform and image from DSO
 
 Module imported:
   1. Python 2.7.6
-  2. dso200 1.01
+  2. dso200 1.02
   3. PySerial 2.7
   4. Matplotlib 1.3.1
   5. Numpy 1.8.0
   6. PySide 1.2.1
+  7. PIL 1.1.7
 
-Version: 1.01
+Version: 1.02
 
-Created on OCT 14 2014
+Created on APR 23 2018
 
 Author: Kevin Meng
 """
+import matplotlib.pyplot as plt
 import matplotlib as mpl
 mpl.rcParams['backend.qt4'] = 'PySide'  #Used for PySide.
 mpl.rcParams['agg.path.chunksize'] = 100000 #For big data.
@@ -46,15 +49,12 @@ from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt4agg import NavigationToolbar2QTAgg as NavigationToolbar
 from mpl_toolkits.axes_grid1 import host_subplot
 import mpl_toolkits.axisartist as AA
-import matplotlib.pyplot as plt
 from PySide import QtCore, QtGui
 import numpy as np
 import os, sys, time
 import dso200
 
-__version__ = "1.01" #OpenWave-200 software version.
-
-
+__version__ = "1.02" #OpenWave-200 software version.
 
 class Window(QtGui.QWidget):
     def __init__(self, parent=None):
@@ -166,7 +166,7 @@ class Window(QtGui.QWidget):
         main_box.addLayout(self.wavectrlLayout)   #Zoom In/Out...
         main_box.addLayout(self.ctrl_box)         #Save/Load/Quit
         self.setLayout(main_box)
-
+        
     def typeAction(self):
         if(self.typeFlag==True):
             self.typeFlag=False
@@ -189,15 +189,15 @@ class Window(QtGui.QWidget):
                 if(dso.info[ch]==[]):
                     print('Failed to save data, raw data information is required!')
                     return
-            f = open(file_name, 'w')
+            f = open(file_name, 'wb')
             item=len(dso.info[0])
             #Write file header.
-            f.write('%s, \n' % dso.info[0][0])
+            f.write('%s,\r\n' % dso.info[0][0])
             for x in xrange(1,  25):
                 str=''
                 for ch in xrange(num):
                     str+=('%s,' % dso.info[ch][x])
-                str+='\n'
+                str+='\r\n'
                 f.write(str)
             str=''
             if(num==1):
@@ -205,7 +205,7 @@ class Window(QtGui.QWidget):
             else:
                 for ch in xrange(num):
                     str+=('%s,,' % dso.info[ch][25])
-            str+='\n'
+            str+='\r\n'
             f.write(str)
             #Write raw data.
             item=len(dso.iWave[0])
@@ -220,7 +220,7 @@ class Window(QtGui.QWidget):
                 else:
                     for ch in xrange(num):
                         str+=('%s,,' % dso.iWave[ch][x])
-                str+='\n'
+                str+='\r\n'
                 f.write(str)
                 if(x==n_tenth):
                     n_tenth+=tenth

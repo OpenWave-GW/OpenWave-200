@@ -31,9 +31,9 @@ Module imported:
   4. Numpy 1.8.0
   5. PIL 1.1.7
 
-Version: 1.01
+Version: 1.02
 
-Created on OCT 14 2014
+Created on APR 23 2018
 
 Author: Kevin Meng
 """
@@ -46,7 +46,18 @@ import array
 import struct
 import os, sys, time
 
-__version__ = "1.01" #dso200 module's version.
+__version__ = "1.02" #dso200 module's version.
+
+def generate_lut():
+    global lu_table
+    num=65536
+    lu_table=[]
+    for i in xrange(num):
+        pixel888=[0]*3
+        pixel888[0]=(i>>8)&0xf8
+        pixel888[1]=(i>>3)&0xfc
+        pixel888[2]=(i<<3)&0xf8
+        lu_table.append(pixel888)
 
 class Dso200:
     def __init__(self):
@@ -60,6 +71,15 @@ class Dso200:
         self.hpos=[[], []]
         self.ch_list=[]
         self.info=[[], []]
+        if(os.name=='posix'): #unix
+            if(os.uname()[1]=='raspberrypi'):
+                self.osname='pi'
+            else:
+                self.osname='unix'
+        else:
+            self.osname='win'
+        generate_lut()
+        
     def ScanComPort(self):
         port_list=list(list_ports.comports())
         num=len(port_list)
@@ -70,27 +90,36 @@ class Dso200:
                 str=str.split(':')
                 print str
                 if((str[0]=='2184')and((str[1]=='0024')or(str[1]=='0025'))):
-                    if(os.name=='posix'): #Ubuntu
+                    if(self.osname=='win'): #Win32
+                        port=port_list[i][0]
+                        print port
+                        self.IO = serial.Serial(port, baudrate=384000, bytesize=8, parity ='N', stopbits=1, xonxoff=False, dsrdtr=False, timeout=5)
+                        time.sleep(0.5)
+                        self.clrBuf()
+                        self.write('*IDN?\n')
+                        name = self.read().split(',')         #Query *IDN?
+                        print('%s connected!\n'% name[1])     #Print model name.
+                        return 0
+                    else: #unix or Raspberry Pi
                         port=port_list[i][0]
                         if(port[0:11]=='/dev/ttyACM'):
-                            self.IO = serial.Serial(port, baudrate=115200, bytesize=8, parity ='N', stopbits=1, xonxoff=False, dsrdtr=False, timeout=2)
-                            #self.write('*CLS\n')
+                            self.IO = serial.Serial(port, baudrate=384000, bytesize=8, parity ='N', stopbits=1, xonxoff=False, dsrdtr=False, timeout=5)
+                            time.sleep(0.5)
+                            while(True):
+                                num=self.IO.inWaiting()
+                                if(num==0):
+                                    break
+                                else:
+                                    print '-',
+                                self.IO.flushInput()              #Clear input buffer.
+                                time.sleep(0.1)
+                            
                             self.write('*IDN?\n')
                             name = self.read().split(',')         #Query *IDN?
                             print('%s connected!\n'% name[1])     #Print model name.
                             return 0
                         else:
                             return -1
-                    else: #Win32
-                        port=port_list[i][0][3:]
-                        com=int(port)
-                        if(com>0):
-                            self.IO = serial.Serial(com-1, baudrate=115200, bytesize=8, parity ='N', stopbits=1, xonxoff=False, dsrdtr=False, timeout=2)
-                            #self.write('*CLS\n')
-                            self.write('*IDN?\n')
-                            name = self.read().split(',')         #Query *IDN?
-                            print('%s connected!\n'% name[1])     #Print model name.
-                            return com-1
         print('Device not found!')
         return -1
         
@@ -100,6 +129,16 @@ class Dso200:
     def read(self):
         return self.IO.readline()
     
+    def clrBuf(self):
+        while(True):              #Clear input buffer.
+            num=self.IO.inWaiting()
+            if(num==0):
+                break
+            else:
+                print '-',
+                self.IO.read(100000)
+                time.sleep(0.2)
+
     def getBlockData(self): #Used to get image data.
         global inBuffer
         inBuffer=self.IO.read(10)
@@ -111,32 +150,28 @@ class Dso200:
         pkg_length=pkg_length-length
         while True:
             print('%8d\r' %pkg_length),
-            if(pkg_length > 100000):
-                try:
-                    buf=self.IO.read(100000)
-                except :
-                    print 'KeyboardInterrupt!'
-                    exit()
-                num=len(buf)
-                inBuffer+=buf
-                pkg_length=pkg_length-num
+            if(pkg_length==0):
+                break
             else:
+                if(pkg_length > 100000):
+                    length=100000
+                else:
+                    length=pkg_length
                 try:
-                    buf=self.IO.read(pkg_length)
-                except :
+                    buf=self.IO.read(length)
+                except:
                     print 'KeyboardInterrupt!'
-                    exit()
+                    self.clrBuf()
+                    self.IO.close()
+                    sys.exit(0)
                 num=len(buf)
                 inBuffer+=buf
                 pkg_length=pkg_length-num
-                if(pkg_length==0):
-                    print('%8d\r' %pkg_length),
-                    break
 
     def RleDecode(self):
         raw_data=[]
         #Convert 8 bits array to 16 bits array.
-        data = np.array(unpack('<%sh' % (len(inBuffer[self.headerlen:-1])/2), inBuffer[self.headerlen:-1]))
+        data = unpack('<%sH' % (len(inBuffer[self.headerlen:-1])/2), inBuffer[self.headerlen:-1])
         l=len(data)
         if( l%2 != 0):   #Ignore reserved data.
             l=l-1
@@ -162,15 +197,16 @@ class Dso200:
         else:
             width = 480
             height = 800
-        self.im = Image.new("RGB", (width, height))
-
         #Convert from rgb565 into rgb888
         index=0
-        for y in xrange(height):
-            for x in xrange(width):
-                px = raw_data[index]
-                self.im.putpixel((x, y),((px & 0xF800) >> 8, (px & 0x07E0) >> 3, (px & 0x001F) << 3))
-                index += 1
+        rgb_buf=[]
+        num=width*height
+        for index in xrange(num):
+            rgb_buf+=lu_table[raw_data[index]]
+        img_buf=struct.pack("1152000B", *rgb_buf)
+        self.im=Image.frombuffer('RGB',(width,height), img_buf, 'raw', 'RGB',0,1)
+        if(self.osname=='pi'):
+            self.im=self.im.transpose(Image.FLIP_TOP_BOTTOM) #For raspberry pi only.
 
     def getRawData(self, header_on,  ch): #Used to get waveform's raw data.
         global inBuffer
@@ -209,7 +245,7 @@ class Dso200:
             #print sHpos, self.vdiv[index],  self.dt[index],  self.hpos[index], sDv
         self.getBlockData()
         self.points_num=len(inBuffer[self.headerlen:-1])/2   #Calculate sample points length.
-        self.iWave[index] = np.array(unpack('>%sh' % (len(inBuffer[self.headerlen:-1])/2), inBuffer[self.headerlen:-1]))
+        self.iWave[index] = unpack('>%sh' % (len(inBuffer[self.headerlen:-1])/2), inBuffer[self.headerlen:-1])
         del inBuffer
         return index #Return the buffer index.
 
@@ -256,7 +292,7 @@ class Dso200:
             self.dataType='lsf'
         else:
             return -1
-        f = open(fileName, 'r')
+        f = open(fileName, 'rb')
         info=[]
         #Read file header.
         if(self.dataType=='csv'):
@@ -285,31 +321,38 @@ class Dso200:
         f.close()
 
         if(count==1): #1 channel
-            self.iWave[0]=[0]*self.points_num
-            self.ch_list.append(info[5].split(',')[1])
-            self.vunit[0] =info[6].split(',')[1] #Get vertical units.
-            self.vdiv[0]   = float(info[12].split(',')[1]) #Get vertical scale. => Voltage for ADC's single step.
-            self.vpos[0] =float(info[13].split(',')[1]) #Get vertical position.
-            self.hpos[0] =float(info[16].split(',')[1]) #Get horizontal position.
-            self.dt[0]   =float(info[19].split(',')[1]) #Get sample period.
-            dv1=self.vdiv[0]/25
-            vpos=int(self.vpos[0]/dv1)+128
-            vpos1=self.vpos[0]
+            ch=0
+            self.iWave[ch]=[0]*self.points_num
+            sCh=[s for s in info if "Source" in s]
+            self.ch_list.append(sCh[0].split(',')[1])
+            sVunit = [s for s in info if "Vertical Units" in s]
+            self.vunit[ch] =sVunit[0].split(',')[1]      #Get vertical units.
+            sDv = [s for s in info if "Vertical Scale" in s]
+            self.vdiv[ch] = float(sDv[0].split(',')[1])  #Get vertical scale. => Voltage for ADC's single step.
+            sVpos=[s for s in info if "Vertical Position" in s]
+            self.vpos[ch] =float(sVpos[0].split(',')[1]) #Get vertical position.
+            sHpos = [s for s in info if "Horizontal Position" in s]
+            self.hpos[ch] =float(sHpos[0].split(',')[1]) #Get horizontal position.
+            sDt = [s for s in info if "Sampling Period" in s]
+            self.dt[ch]=float(sDt[0].split(',')[1])      #Get sample period.
+            dv1=self.vdiv[ch]/25
+            vpos=int(self.vpos[ch]/dv1)+128
+            vpos1=self.vpos[ch]
             num=self.points_num
             if(self.dataType=='csv'):
                 for x in xrange(26):
-                    self.info[0].append(info[x])
+                    self.info[ch].append(info[x])
                 for x in xrange(num):
                     value=int(wave[x].split(',')[0])
-                    self.iWave[0][x]=value
+                    self.iWave[ch][x]=value
             else: #lsf file
                 for x in xrange(24):
-                    self.info[0].append(info[x])
-                self.info[0].append('Mode,Fast') #Convert info[] to csv compatible format.
-                self.info[0].append(info[24])
-                self.iWave[0] = np.array(unpack('<%sh' % (len(wave)/2), wave))
+                    self.info[ch].append(info[x])
+                self.info[ch].append('Mode,Fast') #Convert info[] to csv compatible format.
+                self.info[ch].append('Waveform Data')
+                self.iWave[ch] = np.array(unpack('<%sh' % (len(wave)/2), wave))
                 for x in xrange(num):            #Convert 16 bits signed number to floating point number.
-                    self.iWave[0][x]-=vpos
+                    self.iWave[ch][x]-=vpos
             del wave
             return 1
         elif(count==2): #2 channel, csv file only.
@@ -321,13 +364,20 @@ class Dso200:
                 for ch in xrange(count):
                     self.info[ch].append('%s,%s'%(str[2*ch],  str[2*ch+1]))
             for ch in xrange(count):
-                self.ch_list.append(info[5].split(',')[2*ch+1])
                 self.iWave[ch]=[0]*self.points_num
-                self.vunit[ch]=info[6].split(',')[2*ch+1] #Get vertical units.
-                self.vdiv[ch] =float(info[12].split(',')[2*ch+1]) #Get vertical scale. => Voltage for ADC's single step.
-                self.vpos[ch] =float(info[13].split(',')[2*ch+1]) #Get vertical position.
-                self.hpos[ch] =float(info[16].split(',')[2*ch+1]) #Get horizontal position.
-                self.dt[ch]   =float(info[19].split(',')[2*ch+1]) #Get sample period.
+                sCh=[s for s in info if "Source" in s]
+                self.ch_list.append(sCh[0].split(',')[2*ch+1])
+                sVunit = [s for s in info if "Vertical Units" in s]
+                self.vunit[ch] =sVunit[0].split(',')[2*ch+1]      #Get vertical units.
+                sDv = [s for s in info if "Vertical Scale" in s]
+                self.vdiv[ch] = float(sDv[0].split(',')[2*ch+1])  #Get vertical scale. => Voltage for ADC's single step.
+                sVpos=[s for s in info if "Vertical Position" in s]
+                self.vpos[ch] =float(sVpos[0].split(',')[2*ch+1]) #Get vertical position.
+                sHpos = [s for s in info if "Horizontal Position" in s]
+                self.hpos[ch] =float(sHpos[0].split(',')[2*ch+1]) #Get horizontal position.
+                sDt = [s for s in info if "Sampling Period" in s]
+                self.dt[ch]=float(sDt[0].split(',')[2*ch+1])      #Get sample period.
+
             num=self.points_num
             for ch in xrange(count):
                 self.iWave[ch]=[0]*num
