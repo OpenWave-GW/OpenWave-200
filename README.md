@@ -30,7 +30,7 @@ Environment
 ------------
 Currently OpenWave-200 may be executed on Windows XP/7/8 32 or 64 bits OS. You have to download and install the USB driver(dso_vpo V1.08) from [www.gwinstek.com](http://www.gwinstek.com) or [here](/dso_vpo_v108.zip) when the first connection with GDS-200/300. 
 
-Please unzip the [OpenWave-200 V1.01.zip](/OpenWave-200 V1.01.zip) and find the OpenWave-200.exe in the folder. OpenWave-200.exe can be executed directly without installation.
+Please unzip the [OpenWave-200 V1.01.zip](/OpenWave-200&#32V1.01.zip) and find the OpenWave-200.exe in the folder. OpenWave-200.exe can be executed directly without installation.
 
 The OpenWave-200 source code can also be executed on Ubuntu 32 bits Linux OS. The USB driver is not required in this environment.
 
