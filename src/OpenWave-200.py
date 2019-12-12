@@ -27,17 +27,18 @@ Description:
 OpenWave-200 is a python example program used to get waveform and image from DSO.
 
 Module imported:
-  1. Python 2.7.6
-  2. dso200 1.02
-  3. PySerial 2.7
-  4. Matplotlib 1.3.1
-  5. Numpy 1.8.0
-  6. PySide 1.2.1
-  7. PIL 1.1.7
+  1. Python 2.7.9
+  2. dso200 1.03
+  3. gw_com 1.00
+  4. PySerial 2.7
+  5. Matplotlib 1.3.1
+  6. Numpy 1.8.0
+  7. PySide 1.2.1
+  8. PIL 1.1.7
 
-Version: 1.02
+Version: 1.03
 
-Created on APR 23 2018
+Modified on DEC 11 2019
 
 Author: Kevin Meng
 """
@@ -46,21 +47,52 @@ import matplotlib as mpl
 mpl.rcParams['backend.qt4'] = 'PySide'  #Used for PySide.
 mpl.rcParams['agg.path.chunksize'] = 100000 #For big data.
 from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt4agg import NavigationToolbar2QTAgg as NavigationToolbar
+from matplotlib.backends.backend_qt4agg import NavigationToolbar2QT as NavigationToolbar
 from mpl_toolkits.axes_grid1 import host_subplot
 import mpl_toolkits.axisartist as AA
 from PySide import QtCore, QtGui
 import numpy as np
 import os, sys, time
+from gw_com import com
 import dso200
 
-__version__ = "1.02" #OpenWave-200 software version.
+__version__ = "1.03" #OpenWave-200 software version.
+
+def checkInterface(str):
+    if str!= '':
+        print str
+    #Load config file if it exists
+    elif os.path.exists('port.config'):
+        f = open('port.config', 'r')
+        while(1):
+            str = f.readline()
+            if(str == ''):
+                f.close()
+                return ''
+            if(str[0] != '#'):
+                break
+        f.close()
+       
+    #Check ethernet connection(model name not checked)
+    sInterface=str.split('\n')[0]
+    #print 'sInterface=',sInterface
+    #Check COM port connection(model name not checked)
+    if('COM' in sInterface):
+        if(com.connection_test(sInterface) != ''):
+            return sInterface
+    elif('ttyACM' in sInterface):
+        if 'ttyACM' == sInterface[0:6]:
+            sInterface='/dev/'+sInterface
+        if(com.connection_test(sInterface) != ''):
+            return sInterface
+    
+    return com.scanComPort()  #Scan all the USB port.
 
 class Window(QtGui.QWidget):
     def __init__(self, parent=None):
         super(Window, self).__init__(parent)
 
-        self.setWindowTitle('OpenWave-200')
+        self.setWindowTitle('OpenWave-200 V%s'%__version__)
         icon = QtGui.QIcon()
         icon.addPixmap(QtGui.QPixmap("openwave.ico"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.setWindowIcon(icon)
@@ -90,9 +122,18 @@ class Window(QtGui.QWidget):
 
         self.captureBtn = QtGui.QPushButton('Capture')
         self.captureBtn.setFixedSize(100, 50)
-        self.captureBtn.clicked.connect(self.captureAction)
-        if(portNum==-1):
+        self.captureBtn.clicked.connect(self.manualCapture)
+        if(dso.connection_status==0):
             self.captureBtn.setEnabled(False)
+            
+        self.continuousBtn = QtGui.QRadioButton('Continuous')
+        self.continuousBtn.setEnabled(True)
+        self.continuousBtn.clicked.connect(self.setContinuous)
+
+        #Continuous capture selection
+        self.captureLayout = QtGui.QHBoxLayout()
+        self.captureLayout.addWidget(self.captureBtn)
+        self.captureLayout.addWidget(self.continuousBtn)
 
         #Type: Raw Data/Image
         self.typeBtn = QtGui.QPushButton('Raw Data')
@@ -106,6 +147,7 @@ class Window(QtGui.QWidget):
         #Channel Selection.
         self.ch1checkBox = QtGui.QCheckBox('CH1')
         self.ch1checkBox.setFixedSize(60, 30)
+        self.ch1checkBox.setChecked(True)
         self.ch2checkBox = QtGui.QCheckBox('CH2')
         self.ch2checkBox.setFixedSize(60, 30)
 
@@ -114,10 +156,14 @@ class Window(QtGui.QWidget):
         self.selectLayout.addWidget(self.ch1checkBox)
         self.selectLayout.addWidget(self.ch2checkBox)
 
-#        self.typeLayout = QtGui.QVBoxLayout()
         self.typeLayout = QtGui.QHBoxLayout()
         self.typeLayout.addWidget(self.typeBtn)
         self.typeLayout.addLayout(self.selectLayout)
+
+        self.zoominoutLayout = QtGui.QHBoxLayout()
+        self.zoominoutLayout.addWidget(self.zoomBtn)
+        self.zoominoutLayout.addWidget(self.panBtn)
+        self.zoominoutLayout.addWidget(self.homeBtn)
 
         #Save/Load/Quit button
         self.saveBtn = QtGui.QPushButton('Save')
@@ -147,10 +193,11 @@ class Window(QtGui.QWidget):
         self.wave_box.addLayout(self.waveLayout)
         
         self.wavectrlLayout = QtGui.QHBoxLayout()
-        self.wavectrlLayout.addWidget(self.zoomBtn)
-        self.wavectrlLayout.addWidget(self.panBtn)
-        self.wavectrlLayout.addWidget(self.homeBtn)
-        self.wavectrlLayout.addWidget(self.captureBtn)
+        self.wavectrlLayout.addStretch(1)
+        self.wavectrlLayout.addLayout(self.zoominoutLayout)
+        self.wavectrlLayout.addStretch(1)
+        self.wavectrlLayout.addLayout(self.captureLayout)
+        self.wavectrlLayout.addStretch(1)
         
         self.saveloadLayout = QtGui.QHBoxLayout()
         self.saveloadLayout.addWidget(self.saveBtn)
@@ -167,6 +214,10 @@ class Window(QtGui.QWidget):
         main_box.addLayout(self.ctrl_box)         #Save/Load/Quit
         self.setLayout(main_box)
         
+        self.captured_flag=0
+        self.timer=QtCore.QTimer()
+        self.timer.timeout.connect(self.timerCapture)
+
     def typeAction(self):
         if(self.typeFlag==True):
             self.typeFlag=False
@@ -182,7 +233,7 @@ class Window(QtGui.QWidget):
 
     def saveCsvAction(self):
         if(self.typeFlag==True): #Save raw data to csv file.
-            file_name=QtGui.QFileDialog.getSaveFileName(self, "Save as", '', "Fast CSV File(*.csv)")[0]
+            file_name=QtGui.QFileDialog.getSaveFileName(self, "Save as", 'DS0001', "Fast CSV File(*.csv)")[0]
             num=len(dso.ch_list)
             #print num
             for ch in xrange(num):
@@ -230,15 +281,14 @@ class Window(QtGui.QWidget):
 
     def savePngAction(self):
         #Save figure to png file.
-        file_name=QtGui.QFileDialog.getSaveFileName(self, "Save as", '', "PNG File(*.png)")[0]
+        file_name=QtGui.QFileDialog.getSaveFileName(self, "Save as", 'DS0001', "PNG File(*.png)")[0]
         if(file_name==''):
             return
         if(self.typeFlag==True): #Save raw data waveform as png file.
             main.figure.savefig(file_name)
-            print('Saved image to %s.'%file_name)
         else:  #Save figure to png file.
             dso.im.save(file_name)
-            print('Saved image to %s.'%file_name)
+        print('Image saved to %s.'%file_name)
 
     def loadAction(self):
         dso.ch_list=[]
@@ -260,9 +310,28 @@ class Window(QtGui.QWidget):
             print('File not found!')
 
     def quitAction(self):
-        if(portNum!=-1):
-            dso.IO.close()
+        if(dso.connection_status==1):
+            dso.closeIO()
         self.close()
+    
+    def timerCapture(self):
+        self.captureAction()
+        if(self.continuousBtn.isChecked()==True):
+            self.timer.start(10)  #Automatic capturing. 
+        
+    def manualCapture(self):
+        if(self.continuousBtn.isChecked()==True):
+            if(self.captured_flag ==0):
+                self.captured_flag = 1   #Continuous capture started.
+                self.captureBtn.setText("Click to Stop")
+                self.loadBtn.setEnabled(False)
+                self.timer.start()
+            else:
+                self.captured_flag = 0   #Continuous capture stopped.
+                self.captureBtn.setText("Capture")
+                self.loadBtn.setEnabled(True)
+                self.timer.stop()
+        self.captureAction()
     
     def captureAction(self):
         dso.iWave=[[], []]
@@ -289,12 +358,19 @@ class Window(QtGui.QWidget):
         else: #Get image.
             dso.write(':DISP:OUTP?\n')                 #Send command to get image from DSO.
             dso.getBlockData()
-            dso.RleDecode()
+            dso.ImageDecode()
             self.showImage()
             plt.tight_layout(True)
             self.canvas.draw()
             print('Image is ready!')
 
+    def setContinuous(self):
+        if(self.continuousBtn.isChecked()==False):
+            self.captured_flag = 0   #Continuous capture stopped.
+            self.timer.stop()
+            self.loadBtn.setEnabled(True)
+            self.captureBtn.setText("Capture")
+        
     def showImage(self):
         #Turn the ticks off and show image.
         plt.clf()
@@ -372,7 +448,6 @@ class Window(QtGui.QWidget):
         return 0
 
 if __name__ == '__main__':
-    global portNum
 
     f = open('license.txt', 'r')
     print('-----------------------------------------------------------------------------');
@@ -380,10 +455,18 @@ if __name__ == '__main__':
     f.close()
     print('-----------------------------------------------------------------------------');
     print('OpenWave-200 V%s\n'% __version__)
-    dso=dso200.Dso200()
+
+    #Get command line arguments.
+    cmd=sys.argv[-1]
+    if('OpenWave' in cmd):
+        cmd=''
     
-    #Search and make a connection with COM port.
-    portNum=dso.ScanComPort() #Scan COM port.
+    #Check interface according to config file or command line argument.
+    port=checkInterface(cmd)
+    
+    #Connecting to a DSO.
+    dso=dso200.Dso200(port)
+
     app = QtGui.QApplication(sys.argv)
     main = Window()
     main.show()

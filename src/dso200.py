@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Module name: dso200
 
@@ -25,20 +26,17 @@ Description:
 dso200 is a python driver module used to get waveform and image from DSO.
 
 Module imported:
-  1. Python 2.7.6
-  2. PySerial 2.7
-  3. Matplotlib 1.3.1
-  4. Numpy 1.8.0
-  5. PIL 1.1.7
+  1. PySerial 2.7
+  2. Numpy 1.8.0
+  3. PIL 1.1.7
 
-Version: 1.02
+Version: 1.03
 
-Created on APR 23 2018
+Modified on DEC 11 2018
 
 Author: Kevin Meng
 """
-import serial
-from serial.tools import list_ports
+from gw_com import com
 from PIL import Image
 from struct import unpack
 import numpy as np
@@ -46,7 +44,7 @@ import array
 import struct
 import os, sys, time
 
-__version__ = "1.02" #dso200 module's version.
+__version__ = "1.03" #dso200 module's version.
 
 def generate_lut():
     global lu_table
@@ -60,7 +58,19 @@ def generate_lut():
         lu_table.append(pixel888)
 
 class Dso200:
-    def __init__(self):
+    def __init__(self, interface):
+        if(os.name=='posix'): #unix
+            if(os.uname()[1]=='raspberrypi'):
+                self.osname='pi'
+            else:
+                self.osname='unix'
+        else:
+            self.osname='win'
+        if(interface != ''):
+            self.connect(interface)
+            self.connection_status=1
+        else:
+            self.connection_status=0
         global inBuffer
         self.ver=__version__ #Driver version.
         self.iWave=[[], []]
@@ -71,77 +81,40 @@ class Dso200:
         self.hpos=[[], []]
         self.ch_list=[]
         self.info=[[], []]
-        if(os.name=='posix'): #unix
-            if(os.uname()[1]=='raspberrypi'):
-                self.osname='pi'
-            else:
-                self.osname='unix'
-        else:
-            self.osname='win'
         generate_lut()
         
-    def ScanComPort(self):
-        port_list=list(list_ports.comports())
-        num=len(port_list)
-        for i in xrange(num):
-            str=port_list[i][2].split('=')
-            if(str[0]=='USB VID:PID'):
-                str=str[1].split(' ')[0] #Extract VID and PID from string.
-                str=str.split(':')
-                print str
-                if((str[0]=='2184')and((str[1]=='0024')or(str[1]=='0025'))):
-                    if(self.osname=='win'): #Win32
-                        port=port_list[i][0]
-                        print port
-                        self.IO = serial.Serial(port, baudrate=384000, bytesize=8, parity ='N', stopbits=1, xonxoff=False, dsrdtr=False, timeout=5)
-                        time.sleep(0.5)
-                        self.clrBuf()
-                        self.write('*IDN?\n')
-                        name = self.read().split(',')         #Query *IDN?
-                        print('%s connected!\n'% name[1])     #Print model name.
-                        return 0
-                    else: #unix or Raspberry Pi
-                        port=port_list[i][0]
-                        if(port[0:11]=='/dev/ttyACM'):
-                            self.IO = serial.Serial(port, baudrate=384000, bytesize=8, parity ='N', stopbits=1, xonxoff=False, dsrdtr=False, timeout=5)
-                            time.sleep(0.5)
-                            while(True):
-                                num=self.IO.inWaiting()
-                                if(num==0):
-                                    break
-                                else:
-                                    print '-',
-                                self.IO.flushInput()              #Clear input buffer.
-                                time.sleep(0.1)
-                            
-                            self.write('*IDN?\n')
-                            name = self.read().split(',')         #Query *IDN?
-                            print('%s connected!\n'% name[1])     #Print model name.
-                            return 0
-                        else:
-                            return -1
-        print('Device not found!')
-        return -1
+    def connect(self, str):
+        if('/dev/ttyACM' in str) or ('COM' in str): #Check if str is COM port.
+            try:
+                self.IO=com(str)
+            except:
+                print 'Open COM port failed!'
+                return
+            self.IO.clearBuf()
+        else:
+            return
+        self.write=self.IO.write
+        self.read=self.IO.read
+        self.readBytes=self.IO.readBytes
+        self.closeIO=self.IO.closeIO
+        self.write('*IDN?\n')
+        model_name=self.read().split(',')[1]
+        print '%s connected to %s successfully!'%(model_name, str)
+        if(model_name != ''):
+            self.connection_status=1
+        else:
+            self.connection_status=0
+            print 'Device not found!'
+            return
         
-    def write(self, str):
-        self.IO.write(str)
-        
-    def read(self):
-        return self.IO.readline()
-    
-    def clrBuf(self):
-        while(True):              #Clear input buffer.
-            num=self.IO.inWaiting()
-            if(num==0):
-                break
-            else:
-                print '-',
-                self.IO.read(100000)
-                time.sleep(0.2)
+        if not os.path.exists('port.config'):
+            f = open('port.config', 'wb')
+            f.write(str)
+            f.close()
 
     def getBlockData(self): #Used to get image data.
         global inBuffer
-        inBuffer=self.IO.read(10)
+        inBuffer=self.readBytes(10)
         length=len(inBuffer)
         self.headerlen = 2 + int(inBuffer[1])
         pkg_length = int(inBuffer[2:self.headerlen]) + self.headerlen + 1 #Block #48000[..8000bytes raw data...]<LF>
@@ -158,17 +131,16 @@ class Dso200:
                 else:
                     length=pkg_length
                 try:
-                    buf=self.IO.read(length)
+                    buf=self.readBytes(length)
                 except:
                     print 'KeyboardInterrupt!'
-                    self.clrBuf()
-                    self.IO.close()
+                    self.closeIO()
                     sys.exit(0)
                 num=len(buf)
                 inBuffer+=buf
                 pkg_length=pkg_length-num
 
-    def RleDecode(self):
+    def ImageDecode(self):
         raw_data=[]
         #Convert 8 bits array to 16 bits array.
         data = unpack('<%sH' % (len(inBuffer[self.headerlen:-1])/2), inBuffer[self.headerlen:-1])
@@ -300,6 +272,7 @@ class Dso200:
                 info.append(f.readline().split(',\n')[0])
             if(info[0].split(',')[1]!='0.20'): #Check format version
                 f.close()
+                print('Format error!')
                 return -1
             count=info[5].count('CH')  #Check channel number in file.
             wave=f.read().splitlines() #Read raw data from file.
@@ -309,6 +282,7 @@ class Dso200:
             #print len(info),  info
             if(info[0].split('Format,')[1]!='0.20'): #Check format version
                 f.close()
+                print('Format error!')
                 return -1
             if(f.read(1)!='#'):
                 print('Format error!')
